@@ -1,0 +1,29 @@
+name: NachBot
+
+on:
+  schedule:
+    # Cada 5 min, lunes a viernes, en horario de bolsa de EE. UU. (en UTC, cubre horario de verano e invierno)
+    - cron: "*/5 13-21 * * 1-5"
+  workflow_dispatch: {}   # botón "Run workflow" para lanzarlo a mano
+
+concurrency:
+  group: nachbot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python bot.py
+        env:
+          ALPACA_KEY: ${{ secrets.ALPACA_KEY }}
+          ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
+          LIVE: "false"            # cambiar a "true" SOLO cuando se decida pasar a dinero real
+          BUDGET: "1000"           # capital máximo con el que opera el bot
+          START_EQUITY: "100000"   # saldo inicial de la cuenta (100000 en la cuenta de práctica)
