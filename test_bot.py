@@ -72,7 +72,7 @@ f = Fake(equity=99750, last_equity=99750); log = bot.run(f, cfg, NOW)
 assert f.closed and "APAGADO" in log[-1]
 
 # Cierre antes del final de sesión
-f = Fake(); log = bot.run(f, cfg, CLOSE - timedelta(minutes=5))
+f = Fake(); log = bot.run(f, cfg, CLOSE - timedelta(minutes=15))
 assert f.closed and "Fin de sesión" in log[-1]
 
 # No entra al principio de la sesión

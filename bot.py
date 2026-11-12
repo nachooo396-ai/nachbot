@@ -1,7 +1,7 @@
 """
 NachBot - bot de trading intradía para Alpaca (por defecto, dinero ficticio).
 
-Cada ejecución hace UNA pasada (pensado para lanzarse cada 5 min con GitHub Actions):
+Cada ejecución hace UNA pasada (pensado para lanzarse cada 10 min con GitHub Actions):
   1. Comprueba que el mercado está abierto.
   2. Calcula el capital con el que puede operar (presupuesto fijo; las ganancias se apartan).
   3. Aplica los frenos de seguridad (pérdida diaria, pérdida total, cierre antes del final del día).
@@ -43,7 +43,7 @@ class Config:
     max_trades_per_day: int = int(env_float("MAX_TRADES_PER_DAY", 8))
     no_entry_first_min: int = 15   # no entra en los primeros 15 min (mucho ruido)
     no_entry_last_min: int = 30    # no entra en los últimos 30 min
-    flatten_before_close_min: int = 10  # cierra todo 10 min antes del cierre
+    flatten_before_close_min: int = 20  # cierra todo 20 min antes del cierre
     watchlist: tuple = tuple(os.getenv(
         "WATCHLIST", "SPY,QQQ,AAPL,MSFT,NVDA,AMD,META,AMZN,TSLA,GOOGL").split(","))
 

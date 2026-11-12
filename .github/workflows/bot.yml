@@ -2,8 +2,8 @@ name: NachBot
 
 on:
   schedule:
-    # Cada 5 min, lunes a viernes, en horario de bolsa de EE. UU. (en UTC, cubre horario de verano e invierno)
-    - cron: "*/5 13-21 * * 1-5"
+    # Cada 10 min, lunes a viernes, en horario de bolsa de EE. UU. (en UTC, cubre horario de verano e invierno)
+    - cron: "*/10 13-20 * * 1-5"
   workflow_dispatch: {}   # botón "Run workflow" para lanzarlo a mano
 
 concurrency:
