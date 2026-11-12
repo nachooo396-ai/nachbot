@@ -10,7 +10,7 @@ Bot de trading intradía para Alpaca. **Por defecto opera con dinero ficticio** 
 - Nunca deja nada abierto de un día para otro: cierra todo 20 min antes del cierre.
 
 ## Capital controlado y retirada de ganancias
-- Opera solo con `BUDGET` (1.000 $ por defecto), aunque la cuenta tenga más.
+- Opera solo con `BUDGET` (1.150 $ ≈ 1.000 €), aunque la cuenta tenga más.
 - Lo que gane **se aparta y no se reinvierte**: en cada ejecución verás "Ganancias apartadas para retirar".
 - Si pierde, opera con lo que queda: nunca mete dinero extra.
 - La retirada en sí se hace a mano desde el bróker (los brókers no dejan sacar dinero desde un bot).
@@ -40,3 +40,6 @@ ALPACA_KEY=x ALPACA_SECRET=y python3 test_bot.py
 Solo si tras 2–3 meses en práctica le gana a comprar el S&P 500 y no tocarlo. Habría que abrir cuenta real
 en un bróker con API que acepte residentes en España, cambiar las claves, `LIVE: "true"`, `START_EQUITY` = saldo real
 y empezar con poco.
+
+## Ver el estado sin entrar en Actions
+Rama **estado** del repositorio: `ESTADO.md` (última ejecución) y `REGISTRO.md` (historial).
