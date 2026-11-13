@@ -1,3 +1,7 @@
+## 2026-11-13 15:21
+- Modo: PRÁCTICA (dinero ficticio)
+- Mercado cerrado. Nada que hacer.
+
 ## 2026-11-13 01:41
 - Modo: PRÁCTICA (dinero ficticio)
 - Mercado cerrado. Nada que hacer.
