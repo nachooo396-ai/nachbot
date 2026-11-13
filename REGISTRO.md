@@ -1,3 +1,9 @@
+## 2026-11-13 20:38
+- Modo: PRÁCTICA (dinero ficticio)
+- Capital para operar: 1144.78 $ | Ganancias apartadas para retirar: 0.00 $ | Resultado de hoy: -5.22 $ (comisiones ya descontadas)
+- Comisiones estimadas: hoy 2.00 $ | total 2.00 $
+- Ya hay 2 posiciones abiertas (máximo 2).
+
 ## 2026-11-13 20:32
 - Modo: PRÁCTICA (dinero ficticio)
 - Capital para operar: 1144.76 $ | Ganancias apartadas para retirar: 0.00 $ | Resultado de hoy: -5.24 $ (comisiones ya descontadas)
