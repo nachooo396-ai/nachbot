@@ -1,3 +1,7 @@
+## 2026-11-13 22:03
+- Modo: PRÁCTICA (dinero ficticio)
+- Bolsa cerrada. Fin de la vigilancia de hoy.
+
 ## 2026-11-13 21:58
 - Modo: PRÁCTICA (dinero ficticio)
 - Capital para operar: 1140.16 $ | Ganancias apartadas para retirar: 0.00 $ | Resultado de hoy: -9.84 $ (comisiones ya descontadas)
