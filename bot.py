@@ -46,6 +46,8 @@ class Config:
     no_entry_first_min: int = 15   # no entra en los primeros 15 min (mucho ruido)
     no_entry_last_min: int = 30    # no entra en los últimos 30 min
     flatten_before_close_min: int = 10  # cierra todo 10 min antes del cierre
+    top_actives: int = int(env_float("TOP_ACTIVES", 100))  # nº de acciones más negociadas a revisar
+    min_price: float = env_float("MIN_PRICE", 5)  # ignora acciones de menos de 5 $ (muy especulativas)
     watchlist: tuple = tuple(os.getenv(
         "WATCHLIST", "SPY,QQQ,AAPL,MSFT,NVDA,AMD,META,AMZN,TSLA,GOOGL").split(","))
 
@@ -112,6 +114,36 @@ class Alpaca:
         df["time"] = pd.to_datetime(df["time"])
         return df
 
+    def most_actives(self, top: int) -> list[str]:
+        data = self._req("GET", f"{DATA_URL}/v1beta1/screener/stocks/most-actives",
+                         params={"by": "volume", "top": top})
+        return [m["symbol"] for m in data.get("most_actives", [])]
+
+    def bars_multi(self, symbols: list[str], start: datetime) -> dict:
+        """Velas de 5 min de muchos valores a la vez (por bloques de 50)."""
+        out: dict[str, list] = {}
+        for i in range(0, len(symbols), 50):
+            chunk = symbols[i:i + 50]
+            token = None
+            while True:
+                params = {"symbols": ",".join(chunk), "timeframe": "5Min", "start": start.isoformat(),
+                          "feed": "iex", "adjustment": "raw", "limit": 10000}
+                if token:
+                    params["page_token"] = token
+                data = self._req("GET", f"{DATA_URL}/v2/stocks/bars", params=params)
+                for sym, rows in (data.get("bars") or {}).items():
+                    out.setdefault(sym, []).extend(rows)
+                token = data.get("next_page_token")
+                if not token:
+                    break
+        result = {}
+        for sym, rows in out.items():
+            df = pd.DataFrame(rows).rename(columns={"t": "time", "o": "open", "h": "high",
+                                                    "l": "low", "c": "close", "v": "volume"})
+            df["time"] = pd.to_datetime(df["time"])
+            result[sym] = df.sort_values("time").reset_index(drop=True)
+        return result
+
     def buy_bracket(self, symbol: str, qty: int, take_profit: float, stop_loss: float):
         return self._req("POST", f"{self.cfg.base_url}/v2/orders", json={
             "symbol": symbol, "qty": str(qty), "side": "buy", "type": "market",
@@ -144,20 +176,24 @@ def rsi(s: pd.Series, n: int = 14) -> pd.Series:
     return 100 - 100 / (1 + rs)
 
 
-def entry_signal(df: pd.DataFrame) -> bool:
-    """Señal de compra con la última vela cerrada de 5 min:
+def entry_signal(df: pd.DataFrame, session_open: datetime) -> bool:
+    """Señal de compra con la última vela cerrada de 5 min (usa también velas de días anteriores,
+    así puede dar señales desde el principio de la sesión):
     - la media rápida (EMA 9) acaba de cruzar por encima de la lenta (EMA 21): impulso al alza
-    - el precio está por encima del VWAP de la sesión: compradores dominando el día
+    - el precio está por encima del VWAP de hoy: compradores dominando el día
     - RSI entre 50 y 70: fuerza, pero sin estar ya sobrecomprado."""
     if len(df) < 30:
         return False
+    today = df[df["time"] >= session_open]
+    if today.empty or df["time"].iloc[-1] < session_open:
+        return False
     c = df["close"]
     e9, e21 = ema(c, 9), ema(c, 21)
-    tp = (df["high"] + df["low"] + df["close"]) / 3
-    vwap = (tp * df["volume"]).cumsum() / df["volume"].cumsum().replace(0, 1e-9)
+    tp = (today["high"] + today["low"] + today["close"]) / 3
+    vwap = (tp * today["volume"]).sum() / max(today["volume"].sum(), 1e-9)
     r = rsi(c)
     crossed = e9.iloc[-2] <= e21.iloc[-2] and e9.iloc[-1] > e21.iloc[-1]
-    return bool(crossed and c.iloc[-1] > vwap.iloc[-1] and 50 <= r.iloc[-1] <= 70)
+    return bool(crossed and c.iloc[-1] > vwap and 50 <= r.iloc[-1] <= 70)
 
 
 def position_size(cfg: Config, capital: float, price: float) -> int:
@@ -226,33 +262,46 @@ def run(broker, cfg: Config, now: datetime | None = None) -> list[str]:
         log.append(f"Ya hay {len(held)} posiciones abiertas (máximo {cfg.max_positions}).")
         return log
 
-    # Solo velas ya cerradas
+    # Universo: las más negociadas del momento + la lista fija
+    try:
+        actives = broker.most_actives(cfg.top_actives)
+    except Exception:  # noqa: BLE001
+        actives = []
+    universe = []
+    for sym in list(actives) + [w.strip().upper() for w in cfg.watchlist]:
+        if sym and sym not in universe and sym not in held and sym not in pending:
+            universe.append(sym)
+
+    # Solo velas ya cerradas; se piden también los días anteriores para tener historial
     last_closed = now - timedelta(minutes=5)
-    with_data, up, near = 0, 0, []
-    for sym in cfg.watchlist:
+    all_bars = broker.bars_multi(universe, session_open - timedelta(days=4))
+    max_price = capital / cfg.max_positions
+    with_data, up, near, too_expensive = 0, 0, [], 0
+    for sym in universe:
         if slots <= 0:
             break
-        sym = sym.strip().upper()
-        if not sym or sym in held or sym in pending:
-            continue
-        df = broker.bars(sym, session_open - timedelta(hours=1))
-        if df.empty:
+        df = all_bars.get(sym)
+        if df is None or df.empty:
             continue
         df = df[df["time"] <= last_closed]
-        df = df[df["time"] >= session_open]
-        if len(df):
-            with_data += 1
-            e9, e21 = ema(df["close"], 9).iloc[-1], ema(df["close"], 21).iloc[-1]
-            if e9 > e21:
-                up += 1
-            elif len(df) >= 30 and (e21 - e9) / e21 < 0.0005:
-                near.append(sym)
-        if not entry_signal(df):
+        if len(df) < 30 or df["time"].iloc[-1] < session_open:
             continue
+        with_data += 1
         price = float(df["close"].iloc[-1])
+        e9, e21 = ema(df["close"], 9).iloc[-1], ema(df["close"], 21).iloc[-1]
+        if e9 > e21:
+            up += 1
+        elif (e21 - e9) / e21 < 0.0005:
+            near.append(sym)
+        if price < cfg.min_price:
+            continue
+        if price > max_price:
+            too_expensive += 1
+            continue
+        if not entry_signal(df, session_open):
+            continue
         qty = position_size(cfg, capital, price)
         if qty < 1:
-            log.append(f"{sym}: señal, pero el capital no llega para 1 acción ({price:.2f} $).")
             continue
         tp = price * (1 + cfg.take_profit_pct / 100)
         sl = price * (1 - cfg.stop_loss_pct / 100)
@@ -260,8 +309,9 @@ def run(broker, cfg: Config, now: datetime | None = None) -> list[str]:
         slots -= 1
         log.append(f"COMPRA {sym}: {qty} acc. a ~{price:.2f} $ | objetivo {tp:.2f} | stop {sl:.2f}")
 
-    log.append(f"Precios recibidos de {with_data}/{len(cfg.watchlist)} valores | en tendencia alcista: {up}"
-               + (f" | a punto de dar señal: {', '.join(near)}" if near else ""))
+    log.append(f"Valores revisados: {with_data} (de {len(universe)}) | en tendencia alcista: {up}"
+               + (f" | demasiado caros para el capital: {too_expensive}" if too_expensive else "")
+               + (f" | a punto de dar señal: {', '.join(near[:8])}" if near else ""))
     if not any(l.startswith("COMPRA") for l in log):
         log.append("Sin señales de entrada en esta pasada.")
     return log

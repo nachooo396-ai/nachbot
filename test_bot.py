@@ -38,6 +38,8 @@ class Fake:
     def orders_since(self, s): return []
     def close_all(self): self.closed = True
     def bars(self, sym, start): return self.df.copy()
+    def most_actives(self, top): return ["XYZ", "ABC", "SPY"]
+    def bars_multi(self, syms, start): return {s: self.df.copy() for s in syms}
     def buy_bracket(self, *a): self.orders.append(a)
 
 
@@ -52,7 +54,10 @@ assert bot.trading_capital(cfg, 99900) == (900, 0)
 assert bot.position_size(cfg, 1000, 100) == 3
 
 # Señal detectada
-assert bot.entry_signal(bars_with_cross()[bars_with_cross()["time"] <= NOW - timedelta(minutes=5)])
+assert bot.entry_signal(bars_with_cross(), OPEN)
+# Con historial de días anteriores también da señal al principio de la sesión
+hist = bars_with_cross(); hist["time"] = hist["time"] - timedelta(minutes=5 * 25)
+assert bot.entry_signal(hist, OPEN)
 
 # Mercado cerrado
 f = Fake(is_open=False); assert "cerrado" in bot.run(f, cfg, NOW)[-1] and not f.orders
