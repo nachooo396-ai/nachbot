@@ -36,7 +36,15 @@ class Config:
     live: bool = os.getenv("LIVE", "false").lower() == "true"   # False = dinero ficticio
     budget: float = env_float("BUDGET", 1000)                  # capital máximo con el que opera
     start_equity: float = env_float("START_EQUITY", 100000)    # saldo de la cuenta al arrancar el bot
-    max_positions: int = int(env_float("MAX_POSITIONS", 3))
+    max_positions: int = int(env_float("MAX_POSITIONS", 2))
+    # Comisiones simuladas (Interactive Brokers Pro "Fixed": 0,005 $/acción, mín. 1 $, máx. 1 % por orden;
+    # incluye tasas de bolsa y reguladores). Alpaca en práctica no cobra, así que se descuentan a mano.
+    commission_per_share: float = env_float("COMMISSION_PER_SHARE", 0.005)
+    commission_min: float = env_float("COMMISSION_MIN", 1.0)
+    commission_max_pct: float = env_float("COMMISSION_MAX_PCT", 1.0)
+    max_commission_share_pct: float = env_float("MAX_COMMISSION_SHARE_PCT", 25)  # no entra si las comisiones
+    # de compra+venta se comen más del 25 % de la ganancia objetivo
+    start_date: str = os.getenv("START_DATE", "2026-11-12")  # desde cuándo se cuentan las comisiones
     take_profit_pct: float = env_float("TAKE_PROFIT_PCT", 1.5)  # +1.5 %
     stop_loss_pct: float = env_float("STOP_LOSS_PCT", 0.75)     # -0.75 %
     risk_per_trade_pct: float = env_float("RISK_PER_TRADE_PCT", 1.0)  # máx. 1 % del capital en riesgo por operación
@@ -97,6 +105,17 @@ class Alpaca:
     def orders_since(self, since: datetime):
         return self._req("GET", f"{self.cfg.base_url}/v2/orders",
                          params={"status": "all", "after": since.isoformat(), "limit": 500})
+
+    def filled_orders_since(self, since: datetime) -> list[dict]:
+        """Todas las órdenes ejecutadas desde `since` (con paginación)."""
+        out, after = [], since
+        while True:
+            page = self._req("GET", f"{self.cfg.base_url}/v2/orders", params={
+                "status": "closed", "after": after.isoformat(), "direction": "asc", "limit": 500})
+            out.extend(o for o in page if float(o.get("filled_qty") or 0) > 0)
+            if len(page) < 500:
+                return out
+            after = datetime.fromisoformat(page[-1]["submitted_at"].replace("Z", "+00:00"))
 
     def close_all(self):
         self._req("DELETE", f"{self.cfg.base_url}/v2/orders")
@@ -164,6 +183,31 @@ def trading_capital(cfg: Config, equity: float) -> tuple[float, float]:
     return max(cfg.budget + pnl_total, 0.0), 0.0
 
 
+def commission(cfg: Config, qty: float, price: float) -> float:
+    """Comisión de UNA orden (compra o venta)."""
+    c = max(qty * cfg.commission_per_share, cfg.commission_min)
+    return min(c, qty * price * cfg.commission_max_pct / 100)
+
+
+def commissions_paid(cfg: Config, orders: list[dict], since_today: datetime) -> tuple[float, float]:
+    """(comisiones totales, comisiones de hoy) de las órdenes ejecutadas."""
+    total = today = 0.0
+    for o in orders:
+        c = commission(cfg, float(o["filled_qty"]), float(o["filled_avg_price"]))
+        total += c
+        when = o.get("filled_at") or o.get("submitted_at")
+        if when and datetime.fromisoformat(when.replace("Z", "+00:00")) >= since_today:
+            today += c
+    return total, today
+
+
+def worth_it(cfg: Config, qty: int, price: float) -> bool:
+    """¿Compensa la operación? Las comisiones de compra+venta no deben comerse demasiada ganancia."""
+    target_gain = qty * price * cfg.take_profit_pct / 100
+    round_trip = 2 * commission(cfg, qty, price)
+    return round_trip <= target_gain * cfg.max_commission_share_pct / 100
+
+
 def ema(s: pd.Series, n: int) -> pd.Series:
     return s.ewm(span=n, adjust=False).mean()
 
@@ -218,10 +262,16 @@ def run(broker, cfg: Config, now: datetime | None = None) -> list[str]:
 
     acct = broker.account()
     equity, last_equity = float(acct["equity"]), float(acct["last_equity"])
-    capital, retirable = trading_capital(cfg, equity)
-    day_pnl = equity - last_equity
+    next_close = datetime.fromisoformat(clock["next_close"])
+    session_open = broker.session_open(next_close)
+    start = datetime.fromisoformat(cfg.start_date).replace(tzinfo=timezone.utc)
+    comm_total, comm_today = commissions_paid(cfg, broker.filled_orders_since(start), session_open)
+    # Resultado NETO: lo que daría Alpaca menos las comisiones que cobraría un bróker real
+    capital, retirable = trading_capital(cfg, equity - comm_total)
+    day_pnl = equity - last_equity - comm_today
     log.append(f"Capital para operar: {capital:.2f} $ | Ganancias apartadas para retirar: {retirable:.2f} $ "
-               f"| Resultado de hoy: {day_pnl:+.2f} $")
+               f"| Resultado de hoy: {day_pnl:+.2f} $ (comisiones ya descontadas)")
+    log.append(f"Comisiones estimadas: hoy {comm_today:.2f} $ | total {comm_total:.2f} $")
 
     # Freno 1: se ha perdido demasiado en total -> apagado
     if capital <= cfg.budget * (1 - cfg.kill_switch_pct / 100):
@@ -236,14 +286,12 @@ def run(broker, cfg: Config, now: datetime | None = None) -> list[str]:
         return log
 
     # Freno 3: cerca del cierre -> nada abierto de un día para otro
-    next_close = datetime.fromisoformat(clock["next_close"])
     mins_to_close = (next_close - now).total_seconds() / 60
     if mins_to_close <= cfg.flatten_before_close_min:
         broker.close_all()
         log.append("Fin de sesión: cierro todas las posiciones.")
         return log
 
-    session_open = broker.session_open(next_close)
     mins_since_open = (now - session_open).total_seconds() / 60
     if mins_since_open < cfg.no_entry_first_min or mins_to_close < cfg.no_entry_last_min:
         log.append("Fuera de la ventana de entradas (inicio o final de sesión).")
@@ -276,7 +324,7 @@ def run(broker, cfg: Config, now: datetime | None = None) -> list[str]:
     last_closed = now - timedelta(minutes=5)
     all_bars = broker.bars_multi(universe, session_open - timedelta(days=4))
     max_price = capital / cfg.max_positions
-    with_data, up, near, too_expensive = 0, 0, [], 0
+    with_data, up, near, too_expensive, not_worth = 0, 0, [], 0, 0
     for sym in universe:
         if slots <= 0:
             break
@@ -303,14 +351,20 @@ def run(broker, cfg: Config, now: datetime | None = None) -> list[str]:
         qty = position_size(cfg, capital, price)
         if qty < 1:
             continue
+        if not worth_it(cfg, qty, price):
+            not_worth += 1
+            continue
         tp = price * (1 + cfg.take_profit_pct / 100)
         sl = price * (1 - cfg.stop_loss_pct / 100)
         broker.buy_bracket(sym, qty, tp, sl)
         slots -= 1
-        log.append(f"COMPRA {sym}: {qty} acc. a ~{price:.2f} $ | objetivo {tp:.2f} | stop {sl:.2f}")
+        fee = 2 * commission(cfg, qty, price)
+        log.append(f"COMPRA {sym}: {qty} acc. a ~{price:.2f} $ | objetivo {tp:.2f} | stop {sl:.2f} "
+                   f"| comisiones compra+venta ≈ {fee:.2f} $")
 
     log.append(f"Valores revisados: {with_data} (de {len(universe)}) | en tendencia alcista: {up}"
                + (f" | demasiado caros para el capital: {too_expensive}" if too_expensive else "")
+               + (f" | señales descartadas por comisiones: {not_worth}" if not_worth else "")
                + (f" | a punto de dar señal: {', '.join(near[:8])}" if near else ""))
     if not any(l.startswith("COMPRA") for l in log):
         log.append("Sin señales de entrada en esta pasada.")

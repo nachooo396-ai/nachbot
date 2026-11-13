@@ -18,7 +18,7 @@ Bot de trading intradía para Alpaca. **Por defecto opera con dinero ficticio** 
 ## Frenos de seguridad
 | Freno | Por defecto |
 |---|---|
-| Máx. posiciones a la vez | 3 |
+| Máx. posiciones a la vez | 2 |
 | Riesgo máx. por operación | 1 % del capital |
 | Máx. operaciones al día | 8 |
 | Stop del día (cierra todo y para) | −3 % del presupuesto en el día |
@@ -43,3 +43,10 @@ y empezar con poco.
 
 ## Ver el estado sin entrar en Actions
 Rama **estado** del repositorio: `ESTADO.md` (última ejecución) y `REGISTRO.md` (historial).
+
+## Comisiones
+Alpaca en práctica no cobra comisiones, pero un bróker real sí. El bot simula las de Interactive Brokers Pro "Fixed"
+(0,005 $/acción, mínimo 1 $ y máximo 1 % por orden) y:
+- las descuenta del resultado y de las ganancias para retirar,
+- no compra si las comisiones de compra + venta se comen más del 25 % de la ganancia objetivo.
+El cambio de euros a dólares se paga una vez al ingresar el dinero, no en cada operación.

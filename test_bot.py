@@ -28,7 +28,7 @@ class Fake:
     def __init__(self, equity=100000, last_equity=100000, is_open=True, df=None):
         self.equity, self.last_equity, self.is_open = equity, last_equity, is_open
         self.df = df if df is not None else bars_with_cross()
-        self.orders, self.closed = [], False
+        self.orders, self.closed, self.filled = [], False, []
 
     def clock(self): return {"is_open": self.is_open, "next_close": CLOSE.isoformat()}
     def account(self): return {"equity": str(self.equity), "last_equity": str(self.last_equity)}
@@ -36,6 +36,7 @@ class Fake:
     def positions(self): return []
     def open_orders(self): return []
     def orders_since(self, s): return []
+    def filled_orders_since(self, s): return self.filled
     def close_all(self): self.closed = True
     def bars(self, sym, start): return self.df.copy()
     def most_actives(self, top): return ["XYZ", "ABC", "SPY"]
@@ -50,8 +51,15 @@ cfg.budget, cfg.start_equity = 1000, 100000
 assert bot.trading_capital(cfg, 100150) == (1000, 150)
 assert bot.trading_capital(cfg, 99900) == (900, 0)
 
-# Tamaño: 1000 $ / 3 huecos = 333 $ -> 3 acciones a 100 $
-assert bot.position_size(cfg, 1000, 100) == 3
+# Tamaño: 1000 $ / 2 huecos = 500 $ -> 5 acciones a 100 $
+assert bot.position_size(cfg, 1000, 100) == 5
+
+# Comisiones IBKR Fixed: mínimo 1 $, 0,005 $/acción, máximo 1 %
+assert bot.commission(cfg, 5, 100) == 1.0
+assert bot.commission(cfg, 1000, 50) == 5.0
+assert abs(bot.commission(cfg, 10, 5) - 0.5) < 1e-9          # tope del 1 %
+# 500 $ con objetivo +1,5 % = 7,5 $; comisiones 2 $ = 27 % -> no compensa. 1000 $ -> 2 $ de 15 $ = 13 % -> sí
+assert not bot.worth_it(cfg, 5, 100) and bot.worth_it(cfg, 10, 100)
 
 # Señal detectada
 assert bot.entry_signal(bars_with_cross(), OPEN)
@@ -62,11 +70,21 @@ assert bot.entry_signal(hist, OPEN)
 # Mercado cerrado
 f = Fake(is_open=False); assert "cerrado" in bot.run(f, cfg, NOW)[-1] and not f.orders
 
-# Compra con señal (máximo 3 posiciones)
+# Con 1000 $ y 2 huecos (500 $), las comisiones no compensan -> no compra
 f = Fake(); log = bot.run(f, cfg, NOW)
-assert len(f.orders) == 3, log
+assert not f.orders and any("comisiones" in l for l in log), log
+
+# Con 2300 $ (1150 $ por hueco) sí compra, máximo 2 posiciones
+cfg2 = bot.Config(); cfg2.budget, cfg2.start_equity = 2300, 100000
+f = Fake(); log = bot.run(f, cfg2, NOW)
+assert len(f.orders) == 2, log
 sym, qty, tp, sl = f.orders[0]
-assert qty == 3 and tp > sl
+assert qty == 11 and tp > sl
+
+# Las comisiones se descuentan del resultado: 2 órdenes ejecutadas de 10 acc. a 100 $ = 2 $
+f = Fake(equity=100010); f.filled = [{"filled_qty": "10", "filled_avg_price": "100", "filled_at": NOW.isoformat()}] * 2
+log = bot.run(f, cfg, NOW)
+assert "Ganancias apartadas para retirar: 8.00" in log[1] and "+8.00" in log[1], log
 
 # Stop del día: pierde 30 $ (3 % de 1000)
 f = Fake(equity=99970, last_equity=100000); log = bot.run(f, cfg, NOW)
