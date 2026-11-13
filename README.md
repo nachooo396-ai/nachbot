@@ -3,11 +3,11 @@
 Bot de trading intradía para Alpaca. **Por defecto opera con dinero ficticio** (cuenta de práctica).
 
 ## Qué hace
-- Cada 10 minutos, con la bolsa de EE. UU. abierta (15:30–22:00 hora de España), revisa 10 acciones/ETF muy líquidos:
+- Mientras la bolsa de EE. UU. está abierta (15:30–22:00 hora de España), cada 5 minutos revisa 10 acciones/ETF muy líquidos:
   SPY, QQQ, AAPL, MSFT, NVDA, AMD, META, AMZN, TSLA, GOOGL.
 - **Compra** cuando hay impulso al alza: la media de 9 velas cruza por encima de la de 21, el precio está sobre el VWAP del día y el RSI está entre 50 y 70.
 - Cada compra lleva **objetivo de ganancia +1,5 %** y **stop de pérdida −0,75 %** puestos desde el primer momento.
-- Nunca deja nada abierto de un día para otro: cierra todo 20 min antes del cierre.
+- Nunca deja nada abierto de un día para otro: cierra todo 10 min antes del cierre.
 
 ## Capital controlado y retirada de ganancias
 - Opera solo con `BUDGET` (1.150 $ ≈ 1.000 €), aunque la cuenta tenga más.

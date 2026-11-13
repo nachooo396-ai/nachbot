@@ -13,6 +13,8 @@ Opcionales: ver CONFIG más abajo.
 from __future__ import annotations
 
 import os
+import subprocess
+import time
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -43,7 +45,7 @@ class Config:
     max_trades_per_day: int = int(env_float("MAX_TRADES_PER_DAY", 8))
     no_entry_first_min: int = 15   # no entra en los primeros 15 min (mucho ruido)
     no_entry_last_min: int = 30    # no entra en los últimos 30 min
-    flatten_before_close_min: int = 20  # cierra todo 20 min antes del cierre
+    flatten_before_close_min: int = 10  # cierra todo 10 min antes del cierre
     watchlist: tuple = tuple(os.getenv(
         "WATCHLIST", "SPY,QQQ,AAPL,MSFT,NVDA,AMD,META,AMZN,TSLA,GOOGL").split(","))
 
@@ -255,19 +257,65 @@ def run(broker, cfg: Config, now: datetime | None = None) -> list[str]:
     return log
 
 
+def save_status(lines: list[str]):
+    """Guarda el resultado en la rama 'estado' (si existe el script; en local no hace nada)."""
+    print("\n".join(lines), flush=True)
+    with open("salida.txt", "w") as f:
+        f.write("\n".join(lines) + "\n")
+    if os.path.exists("guardar_estado.sh") and os.getenv("GITHUB_ACTIONS"):
+        subprocess.run(["bash", "guardar_estado.sh"], check=False)
+
+
+def dispatch_next_run():
+    """Lanza una nueva ejecución del workflow (para seguir vigilando más allá del límite de 6 h)."""
+    repo, token = os.getenv("GITHUB_REPOSITORY"), os.getenv("GITHUB_TOKEN")
+    if not (repo and token):
+        return
+    requests.post(f"https://api.github.com/repos/{repo}/actions/workflows/bot.yml/dispatches",
+                  headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+                  json={"ref": "main"}, timeout=20)
+
+
+def loop(cfg: Config, every_min: int = 5, max_hours: float = 5.6, wait_open_hours: float = 2):
+    """Vigila sin parar mientras la bolsa está abierta: una pasada cada `every_min` minutos.
+    Si la bolsa abre en menos de `wait_open_hours`, espera a que abra. Termina al cerrar."""
+    broker = Alpaca(cfg)
+    started = time.time()
+    while True:
+        try:
+            clock = broker.clock()
+            now = datetime.now(timezone.utc)
+            if not clock["is_open"]:
+                wait = (datetime.fromisoformat(clock["next_open"]) - now).total_seconds()
+                if 0 < wait <= wait_open_hours * 3600 and time.time() - started + wait < max_hours * 3600:
+                    print(f"Bolsa cerrada; espero {wait / 60:.0f} min a que abra.", flush=True)
+                    time.sleep(wait + 60)
+                    continue
+                save_status([f"Modo: {'REAL' if cfg.live else 'PRÁCTICA (dinero ficticio)'}",
+                             "Bolsa cerrada. Fin de la vigilancia de hoy."])
+                return
+            save_status(run(broker, cfg, now))
+        except Exception as e:  # noqa: BLE001
+            save_status([f"ERROR: {e}"])
+        if time.time() - started > max_hours * 3600:
+            print("Límite de tiempo de GitHub cerca: lanzo una nueva ejecución para seguir.", flush=True)
+            dispatch_next_run()
+            return
+        time.sleep(every_min * 60)
+
+
 def main():
     cfg = Config()
+    if "--loop" in sys.argv:
+        loop(cfg)
+        return
     try:
         lines = run(Alpaca(cfg), cfg)
     except Exception as e:  # noqa: BLE001
         lines = [f"ERROR: {e}"]
-        print("\n".join(lines))
+        save_status(lines)
         sys.exit(1)
-    print("\n".join(lines))
-    summary = os.getenv("GITHUB_STEP_SUMMARY")
-    if summary:
-        with open(summary, "a") as f:
-            f.write("\n".join(f"- {l}" for l in lines) + "\n")
+    save_status(lines)
 
 
 if __name__ == "__main__":

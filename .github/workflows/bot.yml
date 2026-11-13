@@ -2,52 +2,44 @@ name: NachBot
 
 on:
   schedule:
-    # Cada 10 min, lunes a viernes, en horario de bolsa de EE. UU. (en UTC, cubre horario de verano e invierno)
-    - cron: "3-59/10 13-20 * * 1-5"
+    # Arranque diario antes de la apertura (15:30 en España) y reintentos cada hora por si GitHub se retrasa.
+    # Si ya hay una vigilancia en marcha, el reintento espera y termina al momento.
+    - cron: "7 13,14 * * 1-5"
+    - cron: "37 15-20 * * 1-5"
   workflow_dispatch: {}   # botón "Run workflow" para lanzarlo a mano
   push:
-    branches: [main]      # también se ejecuta al actualizar el código
+    branches: [main]
 
 concurrency:
   group: nachbot
   cancel-in-progress: false
 
 permissions:
-  contents: write         # para guardar el estado en la rama "estado"
+  contents: write         # guardar el estado en la rama "estado"
+  actions: write          # relanzarse si la sesión dura más de 6 h
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - name: Ejecutar bot
-        shell: bash
+      - name: Preparar rama de estado
         run: |
-          set -o pipefail
-          python bot.py 2>&1 | tee salida.txt
+          git config --global user.name "NachBot"
+          git config --global user.email "nachbot@users.noreply.github.com"
+          if git fetch -q origin estado:estado; then git worktree add -q estado-wt estado
+          else git worktree add -q --orphan -b estado estado-wt; fi
+      - name: Vigilar el mercado (una pasada cada 5 min mientras la bolsa está abierta)
+        run: python bot.py --loop
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ALPACA_KEY: ${{ secrets.ALPACA_KEY }}
           ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
           LIVE: "false"            # cambiar a "true" SOLO cuando se decida pasar a dinero real
           BUDGET: "1150"           # ≈ 1.000 € (el bot opera en dólares)
           START_EQUITY: "100000"   # saldo inicial de la cuenta de práctica
-
-      - name: Guardar estado (rama "estado")
-        if: always()
-        shell: bash
-        run: |
-          [ -f salida.txt ] || echo "ERROR: el bot no llegó a ejecutarse" > salida.txt
-          FECHA=$(TZ=Europe/Madrid date '+%Y-%m-%d %H:%M')
-          git config user.name "NachBot"; git config user.email "nachbot@users.noreply.github.com"
-          if git fetch -q origin estado:estado 2>/dev/null; then git checkout -q estado; else git checkout -q --orphan estado; git rm -rq --cached . ; fi
-          { echo "# Estado de NachBot"; echo; echo "Última ejecución: $FECHA (hora de España)"; echo;
-            sed 's/^/- /' salida.txt; } > ESTADO.md
-          { echo "## $FECHA"; sed 's/^/- /' salida.txt; echo; [ -f REGISTRO.md ] && head -n 2000 REGISTRO.md; } > r.tmp
-          mv r.tmp REGISTRO.md
-          git add ESTADO.md REGISTRO.md
-          git commit -qm "Estado $FECHA" && git push -q origin estado
