@@ -228,6 +228,7 @@ def run(broker, cfg: Config, now: datetime | None = None) -> list[str]:
 
     # Solo velas ya cerradas
     last_closed = now - timedelta(minutes=5)
+    with_data, up, near = 0, 0, []
     for sym in cfg.watchlist:
         if slots <= 0:
             break
@@ -239,6 +240,13 @@ def run(broker, cfg: Config, now: datetime | None = None) -> list[str]:
             continue
         df = df[df["time"] <= last_closed]
         df = df[df["time"] >= session_open]
+        if len(df):
+            with_data += 1
+            e9, e21 = ema(df["close"], 9).iloc[-1], ema(df["close"], 21).iloc[-1]
+            if e9 > e21:
+                up += 1
+            elif len(df) >= 30 and (e21 - e9) / e21 < 0.0005:
+                near.append(sym)
         if not entry_signal(df):
             continue
         price = float(df["close"].iloc[-1])
@@ -252,7 +260,9 @@ def run(broker, cfg: Config, now: datetime | None = None) -> list[str]:
         slots -= 1
         log.append(f"COMPRA {sym}: {qty} acc. a ~{price:.2f} $ | objetivo {tp:.2f} | stop {sl:.2f}")
 
-    if len(log) == 2:
+    log.append(f"Precios recibidos de {with_data}/{len(cfg.watchlist)} valores | en tendencia alcista: {up}"
+               + (f" | a punto de dar señal: {', '.join(near)}" if near else ""))
+    if not any(l.startswith("COMPRA") for l in log):
         log.append("Sin señales de entrada en esta pasada.")
     return log
 
