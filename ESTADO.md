@@ -1,6 +1,7 @@
 # Estado de NachBot
 
-Última ejecución: 2026-11-13 15:21 (hora de España)
+Última pasada: 2026-11-13 15:43 (hora de España)
 
 - Modo: PRÁCTICA (dinero ficticio)
-- Mercado cerrado. Nada que hacer.
+- Capital para operar: 1150.00 $ | Ganancias apartadas para retirar: 0.00 $ | Resultado de hoy: +0.00 $
+- Fuera de la ventana de entradas (inicio o final de sesión).
