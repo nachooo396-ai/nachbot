@@ -113,7 +113,7 @@ class Alpaca:
     def buy_bracket(self, symbol: str, qty: int, take_profit: float, stop_loss: float):
         return self._req("POST", f"{self.cfg.base_url}/v2/orders", json={
             "symbol": symbol, "qty": str(qty), "side": "buy", "type": "market",
-            "time_in_force": "day", "order_class": "bracket",
+            "time_in_force": "gtc", "order_class": "bracket",
             "take_profit": {"limit_price": f"{take_profit:.2f}"},
             "stop_loss": {"stop_price": f"{stop_loss:.2f}"},
         })
