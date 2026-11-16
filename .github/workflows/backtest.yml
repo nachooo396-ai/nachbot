@@ -34,7 +34,7 @@ jobs:
         run: |
           git config user.name "NachBot"; git config user.email "nachbot@users.noreply.github.com"
           [ -f BACKTEST.md ] || { echo '```'; cat bt.txt; echo '```'; } > BACKTEST.md
-          cp BACKTEST.md /tmp/BACKTEST.md
+          cp BACKTEST.md /tmp/BACKTEST.md; rm -f BACKTEST.md bt.txt
           git fetch -q origin estado && git checkout -q estado
           cp /tmp/BACKTEST.md BACKTEST.md
           git add BACKTEST.md && git commit -qm "Simulación" && git push -q origin estado
