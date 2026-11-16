@@ -274,23 +274,27 @@ def main():
     split = int(len(sessions) * 2 / 3)
     lines = [f"# Simulación de estrategias ({len(sessions)} sesiones: "
              f"{sessions[0][0].date()} a {sessions[-1][0].date()})", "",
-             f"Presupuesto {cfg.budget:.0f} $, máx. {cfg.max_positions} posiciones, comisiones IBKR Fixed, "
+             f"Presupuesto {cfg.budget:.0f} $, máx. {cfg.max_positions} posiciones, "
              f"deslizamiento {SLIPPAGE * 100:.2f} % por lado. {len(ind)} valores.", ""]
     if bench is not None:
         lines.append(f"Referencia: comprar SPY y no tocarlo en el mismo periodo = {bench:+.2f} %\n")
-    header = None
-    for st in STRATEGIES:
-        r = simulate(st, ind, sessions, cfg)
-        for label, sl in (("Todo", None), ("Primeros 2/3 (elección)", slice(0, split)),
-                          ("Último 1/3 (comprobación)", slice(split, None))):
-            s = stats(r, cfg, sl)
-            if header is None:
-                header = list(s)
-                lines.append("| Estrategia | Periodo | " + " | ".join(header) + " |")
-                lines.append("|---|---|" + "---|" * len(header))
-            lines.append(f"| {st.name} | {label} | " + " | ".join(str(s[k]) for k in header) + " |")
-        print(st.name, stats(r, cfg), flush=True)
-    lines += ["", "## Estrategias", *[f"- **{s.name}**: {s.desc}" for s in STRATEGIES]]
+    scenarios = [("IBKR Fixed (0,005 $/acc, mín. 1 $)", 0.005, 1.0, 25),
+                 ("IBKR Tiered aprox. (0,0039 $/acc, mín. 0,35 $)", 0.0039, 0.35, 25),
+                 ("Sin comisiones (solo para medir la estrategia)", 0.0, 0.0, 100)]
+    for title, per_share, minimum, share in scenarios:
+        cfg.commission_per_share, cfg.commission_min, cfg.max_commission_share_pct = per_share, minimum, share
+        lines += [f"## {title}", "",
+                  "| Estrategia | Periodo | operaciones | resultado % | aciertos % | factor beneficio | comisiones $ | peor caída $ |",
+                  "|---|---|---|---|---|---|---|---|"]
+        for st in STRATEGIES:
+            r = simulate(st, ind, sessions, cfg)
+            for label, sl in (("Todo", None), ("1ª parte (2/3)", slice(0, split)), ("2ª parte (1/3)", slice(split, None))):
+                x = stats(r, cfg, sl)
+                lines.append(f"| {st.name} | {label} | {x['operaciones']} | {x['resultado_%']} | {x['aciertos_%']} "
+                             f"| {x['factor_beneficio']} | {x['comisiones_$']} | {x['peor_caida_$']} |")
+            print(title, st.name, stats(r, cfg), flush=True)
+        lines.append("")
+    lines += ["## Estrategias", *[f"- **{s.name}**: {s.desc}" for s in STRATEGIES]]
     with open("BACKTEST.md", "w") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines))
