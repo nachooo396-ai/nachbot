@@ -1,3 +1,7 @@
+## 2026-11-16 23:51
+- Modo: PRÁCTICA (dinero ficticio)
+- Bolsa cerrada. Espero a la próxima apertura: 17/11 15:30 (hora de España).
+
 ## 2026-11-16 21:44
 - Modo: PRÁCTICA (dinero ficticio) | Estrategia: rupturas (varios días)
 - Capital para operar: 1132.23 $ | Ganancias apartadas para retirar: 0.00 $ | Comisiones estimadas: total 7.00 $
