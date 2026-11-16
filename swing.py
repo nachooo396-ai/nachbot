@@ -87,7 +87,7 @@ def make_breakout(slots=3, enter=55, leave=20):
         if day_i < 200:
             return {}
         row, hi_r, lo_r, sma_r, mom_r = c.iloc[day_i], hi.iloc[day_i], lo.iloc[day_i], sma.iloc[day_i], mom.iloc[day_i]
-        keep = {s for s in held if not (row[s] < lo_r[s])}
+        keep = {s for s in held if s in row.index and not (row[s] < lo_r[s])}
         ok = (row > hi_r) & (row > sma_r)
         cands = mom_r[ok & ~row.index.isin(list(keep))].dropna().sort_values(ascending=False)
         new = list(cands.index[: max(slots - len(keep), 0)])

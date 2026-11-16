@@ -41,5 +41,6 @@ jobs:
           ALPACA_KEY: ${{ secrets.ALPACA_KEY }}
           ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
           LIVE: "false"            # cambiar a "true" SOLO cuando se decida pasar a dinero real
+          STRATEGY: "rupturas"     # "rupturas" (varios días) | "intradia" (probada: pierde)
           BUDGET: "1150"           # ≈ 1.000 € (el bot opera en dólares)
           START_EQUITY: "100000"   # saldo inicial de la cuenta de práctica

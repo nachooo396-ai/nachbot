@@ -1,5 +1,11 @@
 # NachBot
 
+> **Estrategia actual: "rupturas" (varios días).** Compra acciones que cierran en su máximo de 55 días y por encima
+> de su media de 200 días (máx. 3 a la vez, las de más subida en 6 meses primero) y las vende cuando cierran por
+> debajo de su mínimo de 20 días. Elegida con la simulación de 2016-hoy (`swing.py`, resultados en la rama
+> `estado`, archivo SEMANAS.md). La estrategia intradía de abajo se probó y perdía dinero, incluso sin comisiones
+> (BACKTEST.md); sigue en el código (`STRATEGY=intradia`) solo como referencia.
+
 Bot de trading intradía para Alpaca. **Por defecto opera con dinero ficticio** (cuenta de práctica).
 
 ## Qué hace

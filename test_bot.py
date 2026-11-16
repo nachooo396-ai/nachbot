@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 import bot
+import numpy as np
 
 NOW = datetime(2026, 11, 12, 17, 0, tzinfo=timezone.utc)          # 12:00 en Nueva York
 OPEN = datetime(2026, 11, 12, 14, 30, tzinfo=timezone.utc)
@@ -102,3 +103,36 @@ assert f.closed and "Fin de sesión" in log[-1]
 f = Fake(); bot.run(f, cfg, OPEN + timedelta(minutes=10)); assert not f.orders
 
 print("Todas las pruebas OK")
+
+# ---------------------------------------------------------------- estrategia de rupturas (varios días)
+import swing
+days = [d.date() for d in pd.bdate_range("2025-09-01", "2026-11-12")]   # incluye hoy (se ignora)
+wave = 100 + 3 * np.sin(np.arange(len(days)) / 7)
+base = pd.DataFrame({s: wave for s in swing.STOCKS}, index=days)
+base.loc[days[-2], "AAPL"] = 150      # ayer: máximo de 55 días y sobre su media de 200 -> compra
+base.loc[days[-2], "NVDA"] = 50       # ayer: por debajo del mínimo de 20 días -> venta
+base.loc[days[-1], :] = 999           # la vela de hoy (sin cerrar) no debe usarse
+class SwingFake(Fake):
+    def __init__(self, positions=(), orders=()):
+        super().__init__(); self.pos, self.oo, self.bought, self.sold = list(positions), list(orders), [], []
+    def positions(self): return self.pos
+    def open_orders(self): return self.oo
+    def daily_closes(self, syms, start): return base.copy()
+    def buy_notional(self, sym, amt): self.bought.append((sym, amt))
+    def sell_all(self, sym): self.sold.append(sym)
+nv = {"symbol": "NVDA", "unrealized_pl": "-5", "market_value": "380", "unrealized_plpc": "-0.01"}
+ko = {"symbol": "KO", "unrealized_pl": "3", "market_value": "390", "unrealized_plpc": "0.01"}
+cfg3 = bot.Config(); cfg3.budget, cfg3.start_equity = 1150, 100000
+f = SwingFake(positions=[nv, ko]); log = bot.run_swing(f, cfg3, NOW)
+assert f.sold == ["NVDA"] and [b[0] for b in f.bought] == ["AAPL"], log
+assert 370 < f.bought[0][1] < 384, f.bought          # 1150 / 3 menos comisión
+# Repetir la pasada con la compra pendiente no duplica órdenes
+f2 = SwingFake(positions=[ko], orders=[{"symbol": "AAPL", "side": "buy", "order_class": "simple"}])
+bot.run_swing(f2, cfg3, NOW); assert not f2.bought and not f2.sold
+# Paso desde intradía: órdenes bracket abiertas -> cierra todo primero
+f3 = SwingFake(orders=[{"symbol": "AAL", "side": "sell", "order_class": "bracket"}])
+log = bot.run_swing(f3, cfg3, NOW); assert f3.closed and not f3.bought, log
+# Posición fuera del universo (p. ej. TLT de antes) -> se vende
+f4 = SwingFake(positions=[{"symbol": "TLT", "unrealized_pl": "0", "market_value": "300", "unrealized_plpc": "0"}])
+bot.run_swing(f4, cfg3, NOW); assert "TLT" in f4.sold
+print("Pruebas de rupturas OK")

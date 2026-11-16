@@ -35,6 +35,8 @@ def env_float(name: str, default: float) -> float:
 @dataclass
 class Config:
     live: bool = os.getenv("LIVE", "false").lower() == "true"   # False = dinero ficticio
+    strategy: str = os.getenv("STRATEGY", "rupturas")          # "rupturas" (varios días) | "intradia"
+    swing_slots: int = int(env_float("SWING_SLOTS", 3))
     budget: float = env_float("BUDGET", 1000)                  # capital máximo con el que opera
     start_equity: float = env_float("START_EQUITY", 100000)    # saldo de la cuenta al arrancar el bot
     max_positions: int = int(env_float("MAX_POSITIONS", 2))
@@ -163,6 +165,41 @@ class Alpaca:
             df["time"] = pd.to_datetime(df["time"])
             result[sym] = df.sort_values("time").reset_index(drop=True)
         return result
+
+    def daily_closes(self, symbols: list[str], start: datetime) -> pd.DataFrame:
+        """Cierres diarios ajustados (dividendos y splits) de varios valores."""
+        out: dict[str, list] = {}
+        for i in range(0, len(symbols), 50):
+            chunk, token = symbols[i:i + 50], None
+            while True:
+                params = {"symbols": ",".join(chunk), "timeframe": "1Day", "start": start.isoformat(),
+                          "feed": "sip", "adjustment": "all", "limit": 10000}
+                if token:
+                    params["page_token"] = token
+                try:
+                    data = self._req("GET", f"{DATA_URL}/v2/stocks/bars", params=params)
+                except RuntimeError:
+                    params["feed"] = "iex"
+                    data = self._req("GET", f"{DATA_URL}/v2/stocks/bars", params=params)
+                for sym, rows in (data.get("bars") or {}).items():
+                    out.setdefault(sym, []).extend(rows)
+                token = data.get("next_page_token")
+                if not token:
+                    break
+        cols = {}
+        for sym, rows in out.items():
+            df = pd.DataFrame(rows)
+            idx = pd.to_datetime(df["t"]).dt.tz_convert(NY).dt.date
+            cols[sym] = pd.Series(df["c"].values, index=idx)
+        return pd.DataFrame(cols).sort_index()
+
+    def buy_notional(self, symbol: str, amount: float):
+        return self._req("POST", f"{self.cfg.base_url}/v2/orders", json={
+            "symbol": symbol, "notional": f"{amount:.2f}", "side": "buy", "type": "market",
+            "time_in_force": "day"})
+
+    def sell_all(self, symbol: str):
+        return self._req("DELETE", f"{self.cfg.base_url}/v2/positions/{symbol}")
 
     def buy_bracket(self, symbol: str, qty: int, take_profit: float, stop_loss: float):
         return self._req("POST", f"{self.cfg.base_url}/v2/orders", json={
@@ -372,6 +409,72 @@ def run(broker, cfg: Config, now: datetime | None = None) -> list[str]:
     return log
 
 
+def run_swing(broker, cfg: Config, now: datetime | None = None) -> list[str]:
+    """Estrategia T3 "rupturas" (varios días), igual que en la simulación (swing.py):
+    compra acciones que cierran en máximo de 55 días y por encima de su media de 200 días
+    (las de más subida en 6 meses primero, máx. 3) y vende cuando cierran por debajo del mínimo de 20 días.
+    Señales con el cierre de ayer; órdenes al poco de abrir. Repetir la pasada no duplica órdenes."""
+    import swing
+    log = [f"Modo: {'REAL' if cfg.live else 'PRÁCTICA (dinero ficticio)'} | Estrategia: rupturas (varios días)"]
+    now = now or datetime.now(timezone.utc)
+    clock = broker.clock()
+    if not clock["is_open"]:
+        log.append("Mercado cerrado. Nada que hacer.")
+        return log
+    next_close = datetime.fromisoformat(clock["next_close"])
+    session_open = broker.session_open(next_close)
+    if (now - session_open).total_seconds() < 5 * 60:
+        log.append("Esperando a que pasen 5 min desde la apertura.")
+        return log
+
+    acct = broker.account()
+    equity = float(acct["equity"])
+    start = datetime.fromisoformat(cfg.start_date).replace(tzinfo=timezone.utc)
+    comm_total, comm_today = commissions_paid(cfg, broker.filled_orders_since(start), session_open)
+    capital, retirable = trading_capital(cfg, equity - comm_total)
+    log.append(f"Capital para operar: {capital:.2f} $ | Ganancias apartadas para retirar: {retirable:.2f} $ "
+               f"| Comisiones estimadas: total {comm_total:.2f} $")
+
+    open_orders = broker.open_orders()
+    # Cambio desde la estrategia intradía: anular sus órdenes de stop/objetivo y cerrar lo que quede
+    if any(o.get("order_class") in ("bracket", "oco") for o in open_orders):
+        broker.close_all()
+        log.append("Cierro las posiciones y órdenes de la estrategia anterior (intradía).")
+        return log
+
+    if capital <= cfg.budget * (1 - cfg.kill_switch_pct / 100):
+        broker.close_all()
+        log.append(f"APAGADO: pérdida total ≥ {cfg.kill_switch_pct}% del presupuesto. Cierro todo.")
+        return log
+
+    positions = {p["symbol"]: p for p in broker.positions()}
+    pending_buy = {o["symbol"] for o in open_orders if o["side"] == "buy"}
+    pending_sell = {o["symbol"] for o in open_orders if o["side"] == "sell"}
+    today_ny = now.astimezone(NY).date()
+    closes = broker.daily_closes(swing.STOCKS, now - timedelta(days=420))
+    closes = closes[closes.index < today_ny]          # solo días ya cerrados
+    held = set(positions) | pending_buy
+    target = swing.make_breakout(slots=cfg.swing_slots)(closes, len(closes) - 1, held)
+
+    for sym in sorted(held - set(target)):
+        if sym in positions and sym not in pending_sell:
+            broker.sell_all(sym)
+            pl = float(positions[sym]["unrealized_pl"])
+            log.append(f"VENTA {sym}: ha cerrado por debajo de su mínimo de 20 días (resultado ≈ {pl:+.2f} $)")
+    slot_amount = capital / cfg.swing_slots
+    for sym in [s for s in target if s not in held]:
+        fee = commission(cfg, slot_amount / float(closes[sym].iloc[-1]), float(closes[sym].iloc[-1]))
+        broker.buy_notional(sym, slot_amount - fee)
+        log.append(f"COMPRA {sym}: {slot_amount - fee:.2f} $ (ayer cerró en máximo de 55 días)")
+    for sym, p in positions.items():
+        if sym in target:
+            log.append(f"Mantengo {sym}: {float(p['market_value']):.2f} $ "
+                       f"({float(p['unrealized_plpc']) * 100:+.1f} %)")
+    if not any(l.startswith(("COMPRA", "VENTA")) for l in log):
+        log.append(f"Sin cambios hoy. Posiciones: {len(positions)}/{cfg.swing_slots}.")
+    return log
+
+
 def save_status(lines: list[str]):
     """Guarda el resultado en la rama 'estado' (si existe el script; en local no hace nada)."""
     print("\n".join(lines), flush=True)
@@ -418,14 +521,14 @@ def loop(cfg: Config, every_min: int = 5, max_hours: float = 5.6):
                 dispatch_next_run()
                 return
             announced_wait = False
-            save_status(run(broker, cfg, now))
+            save_status((run_swing if cfg.strategy == "rupturas" else run)(broker, cfg, now))
         except Exception as e:  # noqa: BLE001
             save_status([f"ERROR: {e}"])
         if time.time() - started > max_hours * 3600:
             print("Límite de tiempo de GitHub cerca: lanzo una nueva ejecución para seguir.", flush=True)
             dispatch_next_run()
             return
-        time.sleep(every_min * 60)
+        time.sleep((30 if cfg.strategy == "rupturas" else every_min) * 60)
 
 
 def main():
@@ -434,7 +537,7 @@ def main():
         loop(cfg)
         return
     try:
-        lines = run(Alpaca(cfg), cfg)
+        lines = (run_swing if cfg.strategy == "rupturas" else run)(Alpaca(cfg), cfg)
     except Exception as e:  # noqa: BLE001
         lines = [f"ERROR: {e}"]
         save_status(lines)
