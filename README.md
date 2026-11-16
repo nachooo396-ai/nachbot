@@ -50,3 +50,9 @@ Alpaca en práctica no cobra comisiones, pero un bróker real sí. El bot simula
 - las descuenta del resultado y de las ganancias para retirar,
 - no compra si las comisiones de compra + venta se comen más del 25 % de la ganancia objetivo.
 El cambio de euros a dólares se paga una vez al ingresar el dinero, no en cada operación.
+
+## Funcionamiento continuo
+GitHub no lanza las ejecuciones programadas a su hora, así que el bot no depende de eso: con la bolsa cerrada
+espera a la siguiente apertura y, antes del límite de 6 h de cada ejecución, lanza otra que sigue
+esperando o vigilando. Las ejecuciones programadas quedan solo como respaldo.
+Para pararlo del todo: pestaña Actions → NachBot → "..." → Disable workflow.

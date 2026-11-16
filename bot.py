@@ -24,6 +24,7 @@ import requests
 from zoneinfo import ZoneInfo
 
 NY = ZoneInfo("America/New_York")
+MADRID = ZoneInfo("Europe/Madrid")
 
 
 def env_float(name: str, default: float) -> float:
@@ -390,24 +391,33 @@ def dispatch_next_run():
                   json={"ref": "main"}, timeout=20)
 
 
-def loop(cfg: Config, every_min: int = 5, max_hours: float = 5.6, wait_open_hours: float = 2):
-    """Vigila sin parar mientras la bolsa está abierta: una pasada cada `every_min` minutos.
-    Si la bolsa abre en menos de `wait_open_hours`, espera a que abra. Termina al cerrar."""
+def loop(cfg: Config, every_min: int = 5, max_hours: float = 5.6):
+    """Vigila sin parar: una pasada cada `every_min` min con la bolsa abierta.
+    Con la bolsa cerrada espera a que abra. GitHub corta cada ejecución a las 6 h, así que antes
+    de ese límite lanza una ejecución nueva que sigue esperando/vigilando (no depende del cron)."""
     broker = Alpaca(cfg)
     started = time.time()
+    announced_wait = False
     while True:
+        remaining = max_hours * 3600 - (time.time() - started)
         try:
             clock = broker.clock()
             now = datetime.now(timezone.utc)
             if not clock["is_open"]:
-                wait = (datetime.fromisoformat(clock["next_open"]) - now).total_seconds()
-                if 0 < wait <= wait_open_hours * 3600 and time.time() - started + wait < max_hours * 3600:
-                    print(f"Bolsa cerrada; espero {wait / 60:.0f} min a que abra.", flush=True)
-                    time.sleep(wait + 60)
+                wait = (datetime.fromisoformat(clock["next_open"]) - now).total_seconds() + 60
+                if not announced_wait:
+                    save_status([f"Modo: {'REAL' if cfg.live else 'PRÁCTICA (dinero ficticio)'}",
+                                 "Bolsa cerrada. Espero a la próxima apertura: "
+                                 + datetime.fromisoformat(clock["next_open"]).astimezone(MADRID)
+                                 .strftime("%d/%m %H:%M") + " (hora de España)."])
+                    announced_wait = True
+                if wait < remaining:
+                    time.sleep(max(wait, 1))
                     continue
-                save_status([f"Modo: {'REAL' if cfg.live else 'PRÁCTICA (dinero ficticio)'}",
-                             "Bolsa cerrada. Fin de la vigilancia de hoy."])
+                time.sleep(max(remaining, 0))
+                dispatch_next_run()
                 return
+            announced_wait = False
             save_status(run(broker, cfg, now))
         except Exception as e:  # noqa: BLE001
             save_status([f"ERROR: {e}"])
