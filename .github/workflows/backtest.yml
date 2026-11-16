@@ -1,0 +1,40 @@
+name: Simulación
+
+on:
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: "Sesiones de bolsa a simular"
+        default: "60"
+
+concurrency:
+  group: backtest
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python backtest.py ${{ inputs.dias }} | tee bt.txt
+        env:
+          ALPACA_KEY: ${{ secrets.ALPACA_KEY }}
+          ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
+          BUDGET: "1150"
+      - name: Guardar resultado en la rama "estado"
+        if: always()
+        run: |
+          git config user.name "NachBot"; git config user.email "nachbot@users.noreply.github.com"
+          [ -f BACKTEST.md ] || { echo '```'; cat bt.txt; echo '```'; } > BACKTEST.md
+          cp BACKTEST.md /tmp/BACKTEST.md
+          git fetch -q origin estado && git checkout -q estado
+          cp /tmp/BACKTEST.md BACKTEST.md
+          git add BACKTEST.md && git commit -qm "Simulación" && git push -q origin estado
