@@ -1,6 +1,6 @@
 # Estado de NachBot
 
-Última pasada: 2026-11-16 23:51 (hora de España)
+Última pasada: 2026-11-17 05:27 (hora de España)
 
 - Modo: PRÁCTICA (dinero ficticio)
 - Bolsa cerrada. Espero a la próxima apertura: 17/11 15:30 (hora de España).
