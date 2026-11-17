@@ -114,6 +114,8 @@ class Strategy:
     def signals(self, df: pd.DataFrame, spy: pd.DataFrame | None):
         if self.kind == "ema":
             sig = df["cross_up"] & (df["close"] > df["vwap"]) & df["rsi"].between(50, 70)
+        elif self.kind == "mr":  # reversión a la media dentro del día
+            sig = ((df["bar_n"] >= 3) & (df["close"] < df["vwap"] - 2 * df["atr"]) & (df["rsi"] < 25))
         else:  # ORB
             sig = ((df["bar_n"] >= 6) & (df["close"] > df["or_high"]) & (df["close"].shift() <= df["or_high"])
                    & (df["volume"] > 1.2 * df["vol_avg"]))
@@ -136,6 +138,10 @@ STRATEGIES = [
     Strategy("D_orb", "Ruptura del rango de los primeros 30 min con volumen, filtro de mercado",
              market_filter=True, kind="orb", stop="atr"),
     Strategy("E_orb_sin_filtro", "D sin filtro de mercado", kind="orb", stop="atr"),
+    Strategy("F_rebote", "Rebote: compra caídas bruscas bajo el VWAP (2 ATR, RSI<25), objetivo 1,5 ATR, stop 1,5 ATR",
+             kind="mr", stop="atr", rr=1.0),
+    Strategy("G_rebote_filtro", "F solo con el mercado (SPY) alcista", kind="mr", stop="atr", rr=1.0,
+             market_filter=True),
 ]
 
 
@@ -278,9 +284,8 @@ def main():
              f"deslizamiento {SLIPPAGE * 100:.2f} % por lado. {len(ind)} valores.", ""]
     if bench is not None:
         lines.append(f"Referencia: comprar SPY y no tocarlo en el mismo periodo = {bench:+.2f} %\n")
-    scenarios = [("IBKR Fixed (0,005 $/acc, mín. 1 $)", 0.005, 1.0, 25),
-                 ("IBKR Tiered aprox. (0,0039 $/acc, mín. 0,35 $)", 0.0039, 0.35, 25),
-                 ("Sin comisiones (solo para medir la estrategia)", 0.0, 0.0, 100)]
+    scenarios = [("Trading 212 con saldo en dólares (0 comisión, solo diferencial)", 0.0, 0.0, 100),
+                 ("Interactive Brokers Fixed (0,005 $/acc, mín. 1 $)", 0.005, 1.0, 25)]
     for title, per_share, minimum, share in scenarios:
         cfg.commission_per_share, cfg.commission_min, cfg.max_commission_share_pct = per_share, minimum, share
         lines += [f"## {title}", "",

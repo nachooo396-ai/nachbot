@@ -5,7 +5,7 @@ on:
     inputs:
       dias:
         description: "Sesiones de bolsa a simular (intradía)"
-        default: "60"
+        default: "250"
       modo:
         description: "intradia o semanas"
         default: "intradia"
