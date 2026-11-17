@@ -81,7 +81,11 @@ class Alpaca:
         })
 
     def _req(self, method, url, **kw):
-        r = self.s.request(method, url, timeout=20, **kw)
+        for attempt in range(12):                 # límite de peticiones (429): esperar y reintentar
+            r = self.s.request(method, url, timeout=30, **kw)
+            if r.status_code != 429:
+                break
+            time.sleep(min(5 * (attempt + 1), 30))
         if r.status_code >= 400:
             raise RuntimeError(f"{method} {url} -> {r.status_code}: {r.text}")
         return r.json() if r.text else None
