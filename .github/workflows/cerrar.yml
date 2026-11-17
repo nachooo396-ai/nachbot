@@ -1,0 +1,27 @@
+name: Cerrar todo
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  cerrar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Preparar rama de estado
+        run: |
+          git config --global user.name "NachBot"
+          git config --global user.email "nachbot@users.noreply.github.com"
+          git fetch -q origin estado:estado && git worktree add -q estado-wt estado
+      - run: python bot.py --cerrar-todo
+        env:
+          ALPACA_KEY: ${{ secrets.ALPACA_KEY }}
+          ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}

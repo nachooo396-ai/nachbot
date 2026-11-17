@@ -537,6 +537,15 @@ def loop(cfg: Config, every_min: int = 5, max_hours: float = 5.6):
 
 def main():
     cfg = Config()
+    if "--cerrar-todo" in sys.argv:
+        b = Alpaca(cfg)
+        b.close_all()
+        time.sleep(20)
+        left = b.positions()
+        save_status(["CIERRE TOTAL: bot parado, órdenes anuladas y posiciones vendidas.",
+                     f"Posiciones que quedan: {len(left)}" + (f" ({', '.join(p['symbol'] for p in left)})" if left else ""),
+                     f"Saldo de la cuenta de práctica: {float(b.account()['equity']):.2f} $"])
+        return
     if "--loop" in sys.argv:
         loop(cfg)
         return
