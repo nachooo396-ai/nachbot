@@ -1,3 +1,8 @@
+## 2026-11-17 15:46
+- CIERRE TOTAL: bot parado, órdenes anuladas y posiciones vendidas.
+- Posiciones que quedan: 0
+- Saldo de la cuenta de práctica: 99993.13 $
+
 ## 2026-11-17 15:31
 - Modo: PRÁCTICA (dinero ficticio) | Estrategia: rupturas (varios días)
 - Esperando a que pasen 5 min desde la apertura.
